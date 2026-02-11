@@ -1,14 +1,4 @@
 {
   "extends": "./tsconfig.base.json",
-  "files": [],
-  "references": [
-    { "path": "./packages/shared-types" },
-    { "path": "./packages/logger" },
-    { "path": "./packages/config" },
-    { "path": "./packages/metrics" },
-    { "path": "./packages/proxy-core" },
-    { "path": "./packages/proxy-service" },
-    { "path": "./packages/miner-sim" },
-    { "path": "./packages/integration-tests" }
-  ]
+  "files": []
 }

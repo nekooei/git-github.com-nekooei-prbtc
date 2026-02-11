@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'mining-proxy'
+    static_configs:
+      - targets: ['mining-proxy:9090']
+
+recording_rules:
+  - name: mining_proxy_billing
+    interval: 60s
+    rules:
+      - record: mining:bytes_total:daily
+        expr: increase(stratum_bytes_sent_total[1d]) + increase(stratum_bytes_received_total[1d])
+      
+      - record: mining:bytes_total:30d
+        expr: increase(stratum_bytes_sent_total[30d]) + increase(stratum_bytes_received_total[30d])
+      
+      - record: mining:accepted_shares:daily
+        expr: increase(stratum_accepted_shares_total[1d])
+      
+      - record: mining:accepted_shares:30d
+        expr: increase(stratum_accepted_shares_total[30d])
+      
+      - record: mining:reject_rate:5m
+        expr: rate(stratum_rejected_shares_total[5m]) / rate(stratum_submits_total[5m])

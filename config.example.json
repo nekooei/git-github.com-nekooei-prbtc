@@ -1,0 +1,20 @@
+{
+  "proxy": {
+    "bind_address": "0.0.0.0",
+    "bind_port": 3333,
+    "pool_host": "stratum+tcp://pool.example.com",
+    "pool_port": 3333,
+    "metrics_port": 9090,
+    "log_level": "info",
+    "max_connections": 100,
+    "connection_timeout_ms": 30000,
+    "idle_timeout_ms": 300000
+  },
+  "clients": [
+    {
+      "client_id": "miner-001",
+      "allowed": true,
+      "rate_limit_submits_per_minute": 120
+    }
+  ]
+}

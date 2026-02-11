@@ -1,0 +1,97 @@
+{
+  "dashboard": {
+    "title": "Mining Proxy Metrics",
+    "tags": ["mining", "stratum"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "title": "Active Connections",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "stratum_active_connections",
+            "legendFormat": "{{client_id}} -> {{pool_host}}"
+          }
+        ]
+      },
+      {
+        "title": "Bytes Transferred (Rate)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(stratum_bytes_sent_total[5m])",
+            "legendFormat": "Sent - {{client_id}}"
+          },
+          {
+            "expr": "rate(stratum_bytes_received_total[5m])",
+            "legendFormat": "Received - {{client_id}}"
+          }
+        ]
+      },
+      {
+        "title": "Accepted vs Rejected Shares",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(stratum_accepted_shares_total[5m])",
+            "legendFormat": "Accepted - {{client_id}}"
+          },
+          {
+            "expr": "rate(stratum_rejected_shares_total[5m])",
+            "legendFormat": "Rejected - {{client_id}}"
+          }
+        ]
+      },
+      {
+        "title": "Reject Rate %",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "100 * rate(stratum_rejected_shares_total[5m]) / rate(stratum_submits_total[5m])",
+            "legendFormat": "{{client_id}}"
+          }
+        ]
+      },
+      {
+        "title": "Request-Response Latency (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(stratum_request_response_seconds_bucket[5m])) by (le, client_id))",
+            "legendFormat": "p95 - {{client_id}}"
+          }
+        ]
+      },
+      {
+        "title": "Connection Errors",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(stratum_connection_errors_total[5m])",
+            "legendFormat": "{{reason}} - {{client_id}}"
+          }
+        ]
+      },
+      {
+        "title": "30-Day Bandwidth (GB)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "(increase(stratum_bytes_sent_total[30d]) + increase(stratum_bytes_received_total[30d])) / 1e9",
+            "legendFormat": "{{client_id}}"
+          }
+        ]
+      },
+      {
+        "title": "30-Day Accepted Shares",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(stratum_accepted_shares_total[30d])",
+            "legendFormat": "{{client_id}}"
+          }
+        ]
+      }
+    ]
+  }
+}

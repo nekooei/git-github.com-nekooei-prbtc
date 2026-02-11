@@ -1,0 +1,32 @@
+{
+  "name": "mining-proxy-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Transparent Stratum mining proxy with metrics and billing",
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' run build",
+    "dev": "pnpm --filter proxy-service dev",
+    "test": "pnpm -r run test",
+    "test:integration": "pnpm --filter integration-tests test",
+    "lint": "eslint 'packages/**/*.ts'",
+    "format": "prettier --write 'packages/**/*.{ts,json,md}'",
+    "typecheck": "pnpm -r run typecheck",
+    "clean": "pnpm -r run clean && rm -rf node_modules",
+    "start": "pnpm --filter proxy-service start"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.1.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@mining-proxy/proxy-service",
+  "version": "0.1.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mining-proxy/shared-types": "workspace:*",
+    "@mining-proxy/logger": "workspace:*",
+    "@mining-proxy/config": "workspace:*",
+    "@mining-proxy/metrics": "workspace:*",
+    "@mining-proxy/proxy-core": "workspace:*",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,15 @@
+.DS_Store
+node_modules/
+dist/
+*.log
+*.pid
+.env
+.env.local
+config.json
+pnpm-debug.log*
+coverage/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

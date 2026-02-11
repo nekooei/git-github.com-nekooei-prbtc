@@ -1,0 +1,29 @@
+[Unit]
+Description=Mining Stratum Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=mining-proxy
+WorkingDirectory=/opt/mining-proxy
+Environment="NODE_ENV=production"
+Environment="CONFIG_FILE=/etc/mining-proxy/config.json"
+ExecStart=/usr/bin/pnpm start
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/mining-proxy
+
+# Resource limits
+LimitNOFILE=65536
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target

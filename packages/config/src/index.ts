@@ -25,9 +25,10 @@ const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type ValidatedProxyConfig = z.infer<typeof ProxyConfigSchema>;
 
 export class ConfigLoader {
-  static fromEnv(): ProxyConfig {
+  static fromEnv(): ValidatedProxyConfig {
     return ProxyConfigSchema.parse({
       bind_address: process.env.BIND_ADDRESS,
       bind_port: process.env.BIND_PORT ? parseInt(process.env.BIND_PORT, 10) : undefined,

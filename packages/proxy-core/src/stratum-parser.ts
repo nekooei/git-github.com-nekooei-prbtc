@@ -1,5 +1,6 @@
 import { Transform } from 'stream';
 import { StratumMessage } from '@mining-proxy/shared-types';
+import { Logger } from '@mining-proxy/logger';
 
 const JsonParse = require('jsonparse');
 
@@ -10,10 +11,12 @@ const JsonParse = require('jsonparse');
 export class StratumParser extends Transform {
   private parser: any;
   private onMessage: (message: StratumMessage) => void;
+  private logger: Logger;
 
-  constructor(onMessage: (message: StratumMessage) => void) {
+  constructor(onMessage: (message: StratumMessage) => void, logger: Logger) {
     super();
     this.onMessage = onMessage;
+    this.logger = logger;
     this.parser = new JsonParse();
 
     this.parser.onValue = (value: any) => {
@@ -33,6 +36,7 @@ export class StratumParser extends Transform {
       this.parser.write(chunk);
     } catch (err) {
       // Malformed JSON - ignore and continue
+      this.logger.error({err}, 'Malformed JSON');
     }
     // Pass through unchanged
     this.push(chunk);

@@ -44,8 +44,8 @@ export class ProxyConnection extends EventEmitter {
     };
 
     // Parsers for observing Stratum messages
-    this.parser = new StratumParser((msg) => this.handleClientMessage(msg));
-    this.responseParser = new StratumParser((msg) => this.handlePoolMessage(msg));
+    this.parser = new StratumParser((msg) => this.handleClientMessage(msg), logger);
+    this.responseParser = new StratumParser((msg) => this.handlePoolMessage(msg), logger);
 
     this.setupClientSocket();
     this.connectToPool(options.poolHost, options.poolPort, options.timeoutMs);
@@ -119,10 +119,12 @@ export class ProxyConnection extends EventEmitter {
   }
 
   private handleClientMessage(message: StratumMessage): void {
+    this.logger.debug({ message }, 'Received client message');
     this.emitEvent(ProxyEventType.STRATUM_REQUEST, { message });
   }
 
   private handlePoolMessage(message: StratumMessage): void {
+    this.logger.debug({ message }, 'Received pool message');
     if ('method' in message && message.method) {
       this.emitEvent(ProxyEventType.STRATUM_NOTIFICATION, { message });
     } else {

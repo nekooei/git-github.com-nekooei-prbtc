@@ -145,6 +145,15 @@ export class ProxyConnection extends EventEmitter {
       this.bytesReceived += data.length;
       this.emitEvent(ProxyEventType.BYTES_RECEIVED, { bytes: data.length });
 
+      // Log raw data from pool for debugging
+      const preview = data.toString('utf-8', 0, Math.min(200, data.length));
+      const hasNewline = data.includes(0x0a); // Check for \n
+      this.logger.debug({ 
+        bytes: data.length, 
+        has_newline: hasNewline,
+        preview 
+      }, '📥 Raw pool data');
+
       // Parse for metrics
       this.responseParser.write(data);
 

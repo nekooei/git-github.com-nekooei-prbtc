@@ -1,4 +1,3 @@
-import { Transform } from 'stream';
 import { StratumMessage } from '@mining-proxy/shared-types';
 import { Logger } from '@mining-proxy/logger';
 
@@ -7,22 +6,18 @@ import { Logger } from '@mining-proxy/logger';
  * Does not modify data, only observes and emits parsed messages.
  * Resilient to non-JSON data and protocol mismatches.
  */
-export class StratumParser extends Transform {
+export class StratumParser {
   private buffer: string = '';
   private onMessage: (message: StratumMessage) => void;
   private logger: Logger;
   private nonJsonWarned = false;
 
   constructor(onMessage: (message: StratumMessage) => void, logger: Logger) {
-    super();
     this.onMessage = onMessage;
     this.logger = logger;
   }
 
-  _transform(chunk: Buffer, encoding: string, callback: () => void): void {
-    // Pass through unchanged immediately
-    this.push(chunk);
-
+  write(chunk: Buffer): void {
     // Try to parse for metrics (best effort)
     try {
       // Append to buffer and split by newlines
@@ -41,12 +36,21 @@ export class StratumParser extends Transform {
           const obj = JSON.parse(trimmed);
           this.handleMessage(obj);
         } catch (err) {
-          // Not valid JSON - might be HTTP, getwork, or other protocol
+          // Not valid JSON - might be binary Stratum data, HTTP, or other protocol
+          // We forward everything anyway, so just log at debug level
           if (!this.nonJsonWarned) {
-            this.logger.warn(
-              { preview: trimmed.substring(0, 50) },
-              'Non-JSON data detected (not Stratum protocol?). Forwarding anyway.'
-            );
+            const isHttp = trimmed.startsWith('GET ') || trimmed.startsWith('POST ') || trimmed.startsWith('HTTP/');
+            if (isHttp) {
+              this.logger.info(
+                { preview: trimmed.substring(0, 50) },
+                'HTTP request detected on Stratum port (wrong protocol)'
+              );
+            } else {
+              this.logger.debug(
+                { preview: trimmed.substring(0, 50) },
+                'Non-JSON line detected (may be binary Stratum data)'
+              );
+            }
             this.nonJsonWarned = true;
           }
         }
@@ -62,8 +66,6 @@ export class StratumParser extends Transform {
       this.logger.debug({ err }, 'Parser error, continuing');
       this.buffer = ''; // Reset on error
     }
-
-    callback();
   }
 
   private handleMessage(obj: any): void {

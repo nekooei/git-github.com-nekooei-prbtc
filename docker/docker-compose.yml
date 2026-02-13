@@ -12,7 +12,7 @@ services:
       - BIND_ADDRESS=0.0.0.0
       - BIND_PORT=3333
       - METRICS_PORT=9090
-      - LOG_LEVEL=debug
+      - LOG_LEVEL=info
       - MAX_CONNECTIONS=100
     restart: unless-stopped
     logging:
@@ -41,7 +41,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - DOZZLE_NO_ANALYTICS=true
-      - DOZZLE_LEVEL=debug
+      - DOZZLE_LEVEL=info
       - DOZZLE_TAILSIZE=300
       - DOZZLE_FILTER=status=running
       - DOZZLE_HOSTNAME=mining-proxy

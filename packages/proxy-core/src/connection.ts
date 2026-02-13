@@ -60,15 +60,28 @@ export class ProxyConnection extends EventEmitter {
       // Parse for metrics
       this.parser.write(data);
 
-      // Forward to pool
+      // Forward to pool with backpressure handling
       if (this.poolSocket && !this.poolSocket.destroyed) {
-        this.poolSocket.write(data);
+        const canWrite = this.poolSocket.write(data);
+        if (!canWrite) {
+          // Pool socket buffer is full, pause client
+          this.clientSocket.pause();
+          this.logger.debug('Client paused due to pool backpressure');
+        }
       }
     });
 
     this.clientSocket.on('error', (err) => {
       this.logger.error({ err }, 'Client socket error');
       this.close();
+    });
+
+    this.clientSocket.on('drain', () => {
+      // Client socket buffer drained, resume pool
+      if (this.poolSocket && !this.poolSocket.destroyed && this.poolSocket.isPaused()) {
+        this.poolSocket.resume();
+        this.logger.debug('Pool resumed after client drain');
+      }
     });
 
     this.clientSocket.on('close', () => {
@@ -95,9 +108,22 @@ export class ProxyConnection extends EventEmitter {
       // Parse for metrics
       this.responseParser.write(data);
 
-      // Forward to client
+      // Forward to client with backpressure handling
       if (!this.clientSocket.destroyed) {
-        this.clientSocket.write(data);
+        const canWrite = this.clientSocket.write(data);
+        if (!canWrite && this.poolSocket && !this.poolSocket.destroyed) {
+          // Client socket buffer is full, pause pool
+          this.poolSocket.pause();
+          this.logger.debug('Pool paused due to client backpressure');
+        }
+      }
+    });
+
+    this.poolSocket.on('drain', () => {
+      // Pool socket buffer drained, resume client
+      if (!this.clientSocket.destroyed && this.clientSocket.isPaused()) {
+        this.clientSocket.resume();
+        this.logger.debug('Client resumed after pool drain');
       }
     });
 

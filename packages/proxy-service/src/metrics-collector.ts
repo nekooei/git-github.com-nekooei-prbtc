@@ -65,6 +65,14 @@ export class MetricsCollector {
         this.handleStratumNotification(event);
         break;
 
+      case ProxyEventType.SHARE_ACCEPTED:
+        this.handleShareAccepted(event);
+        break;
+
+      case ProxyEventType.SHARE_REJECTED:
+        this.handleShareRejected(event);
+        break;
+
       case ProxyEventType.ERROR:
         if (event.data && typeof event.data === 'object' && 'error' in event.data) {
           this.metrics.connectionErrors.inc({
@@ -136,6 +144,45 @@ export class MetricsCollector {
 
       if (msg.method === 'mining.set_difficulty' && Array.isArray(msg.params) && msg.params[0]) {
         this.metrics.currentDifficulty.set(labels, msg.params[0] as number);
+      }
+    }
+  }
+
+  private handleShareAccepted(event: ProxyEvent): void {
+    const labels = {
+      client_id: event.labels.client_id,
+      pool_host: event.labels.pool_host,
+    };
+    this.metrics.acceptedShares.inc(labels);
+    
+    // Clean up pending request tracking if this is an explicit response
+    if (event.data && typeof event.data === 'object' && 'share_id' in event.data) {
+      const shareId = (event.data as any).share_id;
+      if (shareId !== null) {
+        const key = `${event.connection_id}-${shareId}`;
+        const pending = this.pendingRequests.get(key);
+        if (pending) {
+          const latency = (event.timestamp - pending.timestamp) / 1000;
+          this.metrics.requestResponseLatency.labels(labels).observe(latency);
+          this.pendingRequests.delete(key);
+        }
+      }
+    }
+  }
+
+  private handleShareRejected(event: ProxyEvent): void {
+    const labels = {
+      client_id: event.labels.client_id,
+      pool_host: event.labels.pool_host,
+    };
+    this.metrics.rejectedShares.inc(labels);
+    
+    // Clean up pending request tracking
+    if (event.data && typeof event.data === 'object' && 'share_id' in event.data) {
+      const shareId = (event.data as any).share_id;
+      if (shareId !== null) {
+        const key = `${event.connection_id}-${shareId}`;
+        this.pendingRequests.delete(key);
       }
     }
   }

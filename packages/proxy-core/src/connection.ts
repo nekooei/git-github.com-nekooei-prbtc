@@ -33,6 +33,13 @@ export class ProxyConnection extends EventEmitter {
   private idleTimer?: NodeJS.Timeout;
   private lastActivityTime: number;
   private workerName?: string;
+  private pendingShares: Map<number | string, {
+    timestamp: number;
+    worker: string;
+    jobId: string;
+  }> = new Map();
+  private implicitAcceptanceTimer?: NodeJS.Timeout;
+  private readonly IMPLICIT_ACCEPTANCE_TIMEOUT_MS = 10000; // 10 seconds
 
   // Expected network errors that shouldn't be logged as errors
   private static readonly EXPECTED_ERROR_CODES = new Set([
@@ -77,6 +84,7 @@ export class ProxyConnection extends EventEmitter {
     this.setupClientSocket();
     this.connectToPool(options.poolHost, options.poolPort, options.timeoutMs);
     this.startIdleTimer();
+    this.startImplicitAcceptanceChecker();
   }
 
   private setupClientSocket(): void {
@@ -144,15 +152,6 @@ export class ProxyConnection extends EventEmitter {
       this.resetIdleTimer(); // Activity detected
       this.bytesReceived += data.length;
       this.emitEvent(ProxyEventType.BYTES_RECEIVED, { bytes: data.length });
-
-      // Log raw data from pool for debugging
-      const preview = data.toString('utf-8', 0, Math.min(200, data.length));
-      const hasNewline = data.includes(0x0a); // Check for \n
-      this.logger.debug({ 
-        bytes: data.length, 
-        has_newline: hasNewline,
-        preview 
-      }, '📥 Raw pool data');
 
       // Parse for metrics
       this.responseParser.write(data);
@@ -222,13 +221,26 @@ export class ProxyConnection extends EventEmitter {
       }
     }
 
-    // Log mining.submit with details
+    // Log mining.submit with details and track for implicit acceptance
     if ('method' in message && message.method === 'mining.submit') {
+      const shareId = 'id' in message ? message.id : null;
+      const worker = Array.isArray(message.params) && message.params[0] ? String(message.params[0]) : 'unknown';
+      const jobId = Array.isArray(message.params) && message.params[1] ? String(message.params[1]) : 'unknown';
+      
       this.logger.info({
-        id: 'id' in message ? message.id : null,
-        worker: Array.isArray(message.params) && message.params[0] ? message.params[0] : 'unknown',
-        job_id: Array.isArray(message.params) && message.params[1] ? message.params[1] : 'unknown',
+        id: shareId,
+        worker,
+        job_id: jobId,
       }, '⛏️  Share submitted');
+      
+      // Track this share for implicit acceptance (pools often don't respond on success)
+      if (shareId !== null && shareId !== undefined) {
+        this.pendingShares.set(shareId, {
+          timestamp: Date.now(),
+          worker,
+          jobId,
+        });
+      }
     }
 
     // Log mining.subscribe
@@ -262,10 +274,46 @@ export class ProxyConnection extends EventEmitter {
       this.logger.info({ job_id: jobId }, '📋 New mining job');
     }
 
-    // Log subscribe response
+    // Log subscribe response and handle share responses
     if ('result' in message && 'id' in message && message.id !== null) {
       const result = message.result;
-      if (Array.isArray(result) && result.length >= 2) {
+      
+      // Check if this is a response to a pending share
+      const pendingShare = this.pendingShares.get(message.id);
+      if (pendingShare) {
+        // Explicit response received - remove from pending
+        this.pendingShares.delete(message.id);
+        
+        if (result === true) {
+          this.logger.info({ 
+            id: message.id,
+            worker: pendingShare.worker,
+            job_id: pendingShare.jobId,
+            type: 'explicit'
+          }, '✅ Share accepted (explicit)');
+          
+          this.emitEvent(ProxyEventType.SHARE_ACCEPTED, {
+            share_id: message.id,
+            worker: pendingShare.worker,
+            job_id: pendingShare.jobId,
+            acceptance_type: 'explicit',
+          });
+        } else if (result === false || message.error) {
+          this.logger.warn({ 
+            id: message.id,
+            worker: pendingShare.worker,
+            job_id: pendingShare.jobId,
+            error: message.error
+          }, '❌ Share rejected');
+          
+          this.emitEvent(ProxyEventType.SHARE_REJECTED, {
+            share_id: message.id,
+            worker: pendingShare.worker,
+            job_id: pendingShare.jobId,
+            error: message.error,
+          });
+        }
+      } else if (Array.isArray(result) && result.length >= 2) {
         // Looks like subscribe response
         this.logger.info({ 
           id: message.id,
@@ -279,10 +327,35 @@ export class ProxyConnection extends EventEmitter {
       }
     }
 
-    // Log errors
+    // Log errors and handle share rejections
     if ('error' in message && message.error !== null) {
+      const messageId = 'id' in message ? message.id : null;
+      
+      // Check if this error is for a pending share
+      if (messageId !== null && messageId !== undefined) {
+        const pendingShare = this.pendingShares.get(messageId);
+        if (pendingShare) {
+          this.pendingShares.delete(messageId);
+          
+          this.logger.warn({ 
+            id: messageId,
+            worker: pendingShare.worker,
+            job_id: pendingShare.jobId,
+            error: message.error
+          }, '❌ Share rejected (error)');
+          
+          this.emitEvent(ProxyEventType.SHARE_REJECTED, {
+            share_id: messageId,
+            worker: pendingShare.worker,
+            job_id: pendingShare.jobId,
+            error: message.error,
+          });
+          return;
+        }
+      }
+      
       this.logger.warn({ 
-        id: 'id' in message ? message.id : null,
+        id: messageId,
         error: message.error 
       }, '❌ Error response');
     }
@@ -303,6 +376,43 @@ export class ProxyConnection extends EventEmitter {
       data,
     };
     this.emit('event', event);
+  }
+
+  private startImplicitAcceptanceChecker(): void {
+    // Check every 5 seconds for shares that should be implicitly accepted
+    this.implicitAcceptanceTimer = setInterval(() => {
+      const now = Date.now();
+      const toAccept: Array<[number | string, { timestamp: number; worker: string; jobId: string }]> = [];
+      
+      // Find shares older than timeout threshold
+      for (const [shareId, shareData] of this.pendingShares.entries()) {
+        const age = now - shareData.timestamp;
+        if (age >= this.IMPLICIT_ACCEPTANCE_TIMEOUT_MS) {
+          toAccept.push([shareId, shareData]);
+        }
+      }
+      
+      // Process implicit acceptances
+      for (const [shareId, shareData] of toAccept) {
+        this.pendingShares.delete(shareId);
+        
+        this.logger.info({ 
+          id: shareId,
+          worker: shareData.worker,
+          job_id: shareData.jobId,
+          age_ms: now - shareData.timestamp,
+          type: 'implicit'
+        }, '✅ Share accepted (implicit - no response from pool)');
+        
+        this.emitEvent(ProxyEventType.SHARE_ACCEPTED, {
+          share_id: shareId,
+          worker: shareData.worker,
+          job_id: shareData.jobId,
+          acceptance_type: 'implicit',
+          timeout_ms: now - shareData.timestamp,
+        });
+      }
+    }, 5000); // Check every 5 seconds
   }
 
   private startIdleTimer(): void {
@@ -332,10 +442,34 @@ export class ProxyConnection extends EventEmitter {
     if (this.closed) return;
     this.closed = true;
 
-    // Clear idle timer
+    // Clear timers
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
     }
+    if (this.implicitAcceptanceTimer) {
+      clearInterval(this.implicitAcceptanceTimer);
+    }
+    
+    // Process any remaining pending shares as implicitly accepted
+    const now = Date.now();
+    for (const [shareId, shareData] of this.pendingShares.entries()) {
+      this.logger.info({ 
+        id: shareId,
+        worker: shareData.worker,
+        job_id: shareData.jobId,
+        age_ms: now - shareData.timestamp,
+        type: 'implicit_on_close'
+      }, '✅ Share accepted (implicit - connection closing)');
+      
+      this.emitEvent(ProxyEventType.SHARE_ACCEPTED, {
+        share_id: shareId,
+        worker: shareData.worker,
+        job_id: shareData.jobId,
+        acceptance_type: 'implicit_on_close',
+        timeout_ms: now - shareData.timestamp,
+      });
+    }
+    this.pendingShares.clear();
 
     const duration = Date.now() - this.startTime;
 

@@ -34,7 +34,6 @@ export class StratumParser {
 
         try {
           const obj = JSON.parse(trimmed);
-          this.logger.debug({ parsed_obj: obj }, '📝 Parsed message');
           this.handleMessage(obj);
         } catch (err) {
           // Not valid JSON - might be binary Stratum data, HTTP, or other protocol

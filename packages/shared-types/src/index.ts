@@ -97,6 +97,8 @@ export enum ProxyEventType {
   STRATUM_REQUEST = 'stratum_request',
   STRATUM_RESPONSE = 'stratum_response',
   STRATUM_NOTIFICATION = 'stratum_notification',
+  SHARE_ACCEPTED = 'share_accepted',
+  SHARE_REJECTED = 'share_rejected',
   ERROR = 'error',
 }
 

@@ -14,6 +14,8 @@ services:
       - METRICS_PORT=9090
       - LOG_LEVEL=info
       - MAX_CONNECTIONS=100
+      - CONNECTION_TIMEOUT_MS=1200000
+      - IDLE_TIMEOUT_MS=1200000
     restart: unless-stopped
     logging:
       driver: "json-file"

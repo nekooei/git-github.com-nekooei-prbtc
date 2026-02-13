@@ -49,7 +49,7 @@ export class ProxyConnection extends EventEmitter {
     this.connectionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.startTime = Date.now();
     this.lastActivityTime = Date.now();
-    this.idleTimeoutMs = options.idleTimeoutMs || 300000; // Default 5 minutes
+    this.idleTimeoutMs = options.idleTimeoutMs || 1800000; // 30 minutes (increased from 5)
     this.logger = logger.child({ connection_id: this.connectionId });
 
     this.labels = {
@@ -58,6 +58,13 @@ export class ProxyConnection extends EventEmitter {
       pool_host: options.poolHost,
       pool_port: options.poolPort,
     };
+
+    this.logger.info({
+      client_id: options.clientId,
+      client_ip: clientSocket.remoteAddress,
+      pool: `${options.poolHost}:${options.poolPort}`,
+      idle_timeout_minutes: this.idleTimeoutMs / 60000
+    }, '🔌 New connection established');
 
     // Parsers for observing Stratum messages
     this.parser = new StratumParser((msg) => this.handleClientMessage(msg), logger);
@@ -183,24 +190,94 @@ export class ProxyConnection extends EventEmitter {
   }
 
   private handleClientMessage(message: StratumMessage): void {
-    this.logger.debug({ message }, 'Received client message');
+    // Log ALL client messages for protocol debugging
+    this.logger.info({ 
+      message,
+      worker: this.workerName || 'unknown',
+      current_client_id: this.labels.client_id 
+    }, 'CLIENT→POOL');
     
-    // Extract worker name from mining.authorize
+    // Extract worker name from mining.authorize BEFORE emitting event
     if ('method' in message && message.method === 'mining.authorize' && Array.isArray(message.params) && message.params[0]) {
       const newWorkerName = String(message.params[0]);
       if (!this.workerName && newWorkerName) {
         this.workerName = newWorkerName;
+        const oldClientId = this.labels.client_id;
         this.labels.client_id = newWorkerName;
         this.logger = this.logger.child({ worker: newWorkerName });
-        this.logger.info({ worker: newWorkerName }, 'Worker identified');
+        this.logger.info({ 
+          old_id: oldClientId,
+          new_id: newWorkerName,
+          method: 'mining.authorize'
+        }, '🎯 Worker identified - updating all future events');
       }
+    }
+
+    // Log mining.submit with details
+    if ('method' in message && message.method === 'mining.submit') {
+      this.logger.info({
+        id: 'id' in message ? message.id : null,
+        worker: Array.isArray(message.params) && message.params[0] ? message.params[0] : 'unknown',
+        job_id: Array.isArray(message.params) && message.params[1] ? message.params[1] : 'unknown',
+      }, '⛏️  Share submitted');
+    }
+
+    // Log mining.subscribe
+    if ('method' in message && message.method === 'mining.subscribe') {
+      this.logger.info({ 
+        id: 'id' in message ? message.id : null,
+        params: message.params
+      }, '📡 Mining subscribe');
     }
     
     this.emitEvent(ProxyEventType.STRATUM_REQUEST, { message });
   }
 
   private handlePoolMessage(message: StratumMessage): void {
-    this.logger.debug({ message }, 'Received pool message');
+    // Log ALL pool messages for protocol debugging
+    this.logger.info({ 
+      message,
+      worker: this.workerName || 'unknown',
+      current_client_id: this.labels.client_id
+    }, 'POOL→CLIENT');
+
+    // Log mining.set_difficulty
+    if ('method' in message && message.method === 'mining.set_difficulty') {
+      const difficulty = Array.isArray(message.params) && message.params[0] ? message.params[0] : 'unknown';
+      this.logger.info({ difficulty }, '🎯 Difficulty set');
+    }
+
+    // Log mining.notify (new job)
+    if ('method' in message && message.method === 'mining.notify') {
+      const jobId = Array.isArray(message.params) && message.params[0] ? message.params[0] : 'unknown';
+      this.logger.info({ job_id: jobId }, '📋 New mining job');
+    }
+
+    // Log subscribe response
+    if ('result' in message && 'id' in message && message.id !== null) {
+      const result = message.result;
+      if (Array.isArray(result) && result.length >= 2) {
+        // Looks like subscribe response
+        this.logger.info({ 
+          id: message.id,
+          session_id: result[0],
+          extranonce1: result[1]
+        }, '✅ Subscribe response');
+      } else if (result === true) {
+        this.logger.info({ id: message.id }, '✅ Request accepted');
+      } else if (result === false) {
+        this.logger.warn({ id: message.id }, '❌ Request rejected');
+      }
+    }
+
+    // Log errors
+    if ('error' in message && message.error !== null) {
+      this.logger.warn({ 
+        id: 'id' in message ? message.id : null,
+        error: message.error 
+      }, '❌ Error response');
+    }
+    
     if ('method' in message && message.method) {
       this.emitEvent(ProxyEventType.STRATUM_NOTIFICATION, { message });
     } else {
@@ -222,7 +299,12 @@ export class ProxyConnection extends EventEmitter {
   private startIdleTimer(): void {
     this.idleTimer = setTimeout(() => {
       const idleTime = Date.now() - this.lastActivityTime;
-      this.logger.info({ idle_ms: idleTime }, 'Idle timeout, closing connection');
+      this.logger.warn({ 
+        idle_ms: idleTime,
+        idle_minutes: (idleTime / 60000).toFixed(2),
+        worker: this.workerName || 'unknown',
+        shares_period: 'Low hashrate miner - increase idle_timeout_ms if needed'
+      }, '⏰ Idle timeout - closing connection');
       this.close();
     }, this.idleTimeoutMs);
   }

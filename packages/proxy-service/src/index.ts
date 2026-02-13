@@ -25,6 +25,7 @@ async function main() {
       poolPort: config.proxy.pool_port,
       maxConnections: config.proxy.max_connections,
       connectionTimeoutMs: config.proxy.connection_timeout_ms,
+      idleTimeoutMs: config.proxy.idle_timeout_ms,
     },
     logger
   );

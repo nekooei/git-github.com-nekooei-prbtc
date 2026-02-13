@@ -11,6 +11,7 @@ export interface ProxyServerOptions {
   poolPort: number;
   maxConnections?: number;
   connectionTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }
 
 export class ProxyServer extends EventEmitter {
@@ -82,6 +83,7 @@ export class ProxyServer extends EventEmitter {
         poolPort: this.options.poolPort,
         clientId,
         timeoutMs: this.options.connectionTimeoutMs,
+        idleTimeoutMs: this.options.idleTimeoutMs,
       },
       this.logger
     );

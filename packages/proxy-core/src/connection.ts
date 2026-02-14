@@ -39,7 +39,8 @@ export class ProxyConnection extends EventEmitter {
     jobId: string;
   }> = new Map();
   private implicitAcceptanceTimer?: NodeJS.Timeout;
-  private readonly IMPLICIT_ACCEPTANCE_TIMEOUT_MS = 10000; // 10 seconds
+  private readonly IMPLICIT_ACCEPTANCE_TIMEOUT_MS = 5000; // 5 seconds (Fix #3 - reduced from 10s)
+  private closeReason?: string; // Track why connection closed (Fix #5)
 
   // Expected network errors that shouldn't be logged as errors
   private static readonly EXPECTED_ERROR_CODES = new Set([
@@ -77,8 +78,8 @@ export class ProxyConnection extends EventEmitter {
     this.parser = new StratumParser((msg) => this.handleClientMessage(msg), logger);
     this.responseParser = new StratumParser((msg) => this.handlePoolMessage(msg), logger);
 
-    // Enable TCP keepalive on client socket
-    this.clientSocket.setKeepAlive(true, 60000); // Send keepalive after 60s idle
+    // Enable TCP keepalive on client socket (Fix #4 - increased from 60s to 180s)
+    this.clientSocket.setKeepAlive(true, 180000); // Send keepalive after 180s idle
     this.clientSocket.setNoDelay(true); // Disable Nagle's algorithm for low latency
 
     this.setupClientSocket();
@@ -110,6 +111,7 @@ export class ProxyConnection extends EventEmitter {
 
     this.clientSocket.on('error', (err: NodeJS.ErrnoException) => {
       const isExpected = err.code && ProxyConnection.EXPECTED_ERROR_CODES.has(err.code);
+      this.closeReason = `client_error:${err.code || err.message}`; // Fix #5
       if (isExpected) {
         this.logger.debug({ err: err.message, code: err.code }, 'Client disconnected');
       } else {
@@ -126,8 +128,11 @@ export class ProxyConnection extends EventEmitter {
       }
     });
 
-    this.clientSocket.on('close', () => {
-      this.logger.debug('Client socket closed');
+    this.clientSocket.on('close', (hadError) => {
+      if (!this.closeReason) {
+        this.closeReason = hadError ? 'client_close_with_error' : 'client_close_normal'; // Fix #5
+      }
+      this.logger.debug({ hadError, reason: this.closeReason }, 'Client socket closed');
       this.close();
     });
   }
@@ -140,8 +145,8 @@ export class ProxyConnection extends EventEmitter {
       const latency = Date.now() - connectStart;
       this.logger.info({ latency, pool: `${host}:${port}` }, 'Connected to pool');
       
-      // Enable TCP keepalive on pool socket
-      this.poolSocket!.setKeepAlive(true, 60000);
+      // Enable TCP keepalive on pool socket (Fix #4 - increased from 60s to 180s)
+      this.poolSocket!.setKeepAlive(true, 180000);
       this.poolSocket!.setNoDelay(true);
       
       this.emitEvent(ProxyEventType.CONNECTION_OPENED, { connect_latency_ms: latency });
@@ -177,6 +182,7 @@ export class ProxyConnection extends EventEmitter {
 
     this.poolSocket.on('error', (err: NodeJS.ErrnoException) => {
       const isExpected = err.code && ProxyConnection.EXPECTED_ERROR_CODES.has(err.code);
+      this.closeReason = `pool_error:${err.code || err.message}`; // Fix #5
       if (isExpected) {
         this.logger.info({ err: err.message, code: err.code }, 'Pool connection error');
       } else {
@@ -187,12 +193,16 @@ export class ProxyConnection extends EventEmitter {
     });
 
     this.poolSocket.on('timeout', () => {
+      this.closeReason = 'pool_timeout'; // Fix #5
       this.logger.warn('Pool socket timeout');
       this.close();
     });
 
-    this.poolSocket.on('close', () => {
-      this.logger.debug('Pool socket closed');
+    this.poolSocket.on('close', (hadError) => {
+      if (!this.closeReason) {
+        this.closeReason = hadError ? 'pool_close_with_error' : 'pool_close_normal'; // Fix #5
+      }
+      this.logger.debug({ hadError, reason: this.closeReason }, 'Pool socket closed');
       this.close();
     });
   }
@@ -379,7 +389,7 @@ export class ProxyConnection extends EventEmitter {
   }
 
   private startImplicitAcceptanceChecker(): void {
-    // Check every 5 seconds for shares that should be implicitly accepted
+    // Fix #3: Check every 2 seconds for faster detection
     this.implicitAcceptanceTimer = setInterval(() => {
       const now = Date.now();
       const toAccept: Array<[number | string, { timestamp: number; worker: string; jobId: string }]> = [];
@@ -390,6 +400,15 @@ export class ProxyConnection extends EventEmitter {
         if (age >= this.IMPLICIT_ACCEPTANCE_TIMEOUT_MS) {
           toAccept.push([shareId, shareData]);
         }
+      }
+      
+      // Fix #3: Log pending shares count for visibility
+      if (this.pendingShares.size > 0) {
+        this.logger.debug({ 
+          pending_count: this.pendingShares.size,
+          to_accept: toAccept.length,
+          worker: this.workerName || 'unknown'
+        }, '📊 Share tracking status');
       }
       
       // Process implicit acceptances
@@ -412,12 +431,13 @@ export class ProxyConnection extends EventEmitter {
           timeout_ms: now - shareData.timestamp,
         });
       }
-    }, 5000); // Check every 5 seconds
+    }, 2000); // Check every 2 seconds (reduced from 5s)
   }
 
   private startIdleTimer(): void {
     this.idleTimer = setTimeout(() => {
       const idleTime = Date.now() - this.lastActivityTime;
+      this.closeReason = 'idle_timeout'; // Fix #5
       this.logger.warn({ 
         idle_ms: idleTime,
         idle_minutes: (idleTime / 60000).toFixed(2),
@@ -484,11 +504,21 @@ export class ProxyConnection extends EventEmitter {
       duration_ms: duration,
       bytes_sent: this.bytesSent,
       bytes_received: this.bytesReceived,
+      close_reason: this.closeReason, // Fix #5
     });
 
+    // Fix #5: Enhanced logging with close reason and connection quality metrics
     this.logger.info(
-      { duration_ms: duration, bytes_sent: this.bytesSent, bytes_received: this.bytesReceived },
-      'Connection closed'
+      { 
+        duration_ms: duration, 
+        bytes_sent: this.bytesSent, 
+        bytes_received: this.bytesReceived,
+        close_reason: this.closeReason || 'unknown',
+        worker: this.workerName || 'unknown',
+        pending_shares: this.pendingShares.size,
+        data_rate_kbps: duration > 0 ? ((this.bytesSent + this.bytesReceived) / duration * 8).toFixed(2) : 0
+      },
+      '🔌 Connection closed'
     );
 
     this.removeAllListeners();

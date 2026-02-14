@@ -20,6 +20,9 @@ export class ProxyServer extends EventEmitter {
   private options: ProxyServerOptions;
   private connections = new Map<string, ProxyConnection>();
   private clientCounter = 0;
+  private recentConnections = new Map<string, number[]>();
+  private readonly CONNECTION_THROTTLE_MS = 5000; // 5 seconds
+  private readonly MAX_CONNECTIONS_PER_WINDOW = 1; // Max 1 new connection per IP per window
 
   constructor(options: ProxyServerOptions, logger: Logger) {
     super();
@@ -63,6 +66,14 @@ export class ProxyServer extends EventEmitter {
   private handleConnection(socket: net.Socket): void {
     const clientId = `miner-${++this.clientCounter}`;
     const remoteAddr = `${socket.remoteAddress}:${socket.remotePort}`;
+    const clientIp = socket.remoteAddress || 'unknown';
+
+    // Check connection throttling (Fix #1)
+    if (this.isThrottled(clientIp)) {
+      this.logger.warn({ clientId, clientIp, remoteAddr }, '⚠️  Connection throttled - too many reconnects');
+      socket.destroy();
+      return;
+    }
 
     // Check max connections
     if (
@@ -73,6 +84,9 @@ export class ProxyServer extends EventEmitter {
       socket.destroy();
       return;
     }
+
+    // Track this connection attempt
+    this.trackConnection(clientIp);
 
     this.logger.info({ clientId, remoteAddr }, 'New connection');
 
@@ -97,6 +111,32 @@ export class ProxyServer extends EventEmitter {
         this.connections.delete(clientId);
       }
     });
+  }
+
+  private isThrottled(ip: string): boolean {
+    const now = Date.now();
+    const timestamps = this.recentConnections.get(ip) || [];
+    
+    // Remove old timestamps outside the window
+    const validTimestamps = timestamps.filter(
+      (ts) => now - ts < this.CONNECTION_THROTTLE_MS
+    );
+    
+    // Update the map
+    if (validTimestamps.length > 0) {
+      this.recentConnections.set(ip, validTimestamps);
+    } else {
+      this.recentConnections.delete(ip);
+    }
+    
+    return validTimestamps.length >= this.MAX_CONNECTIONS_PER_WINDOW;
+  }
+
+  private trackConnection(ip: string): void {
+    const now = Date.now();
+    const timestamps = this.recentConnections.get(ip) || [];
+    timestamps.push(now);
+    this.recentConnections.set(ip, timestamps);
   }
 
   getActiveConnections(): number {
